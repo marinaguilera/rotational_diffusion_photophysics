@@ -7,7 +7,7 @@ import spherical as sf  # currently not used, might be removed in the future
 # in STARSS experiments.
 
 class System:
-    def __init__(fluorophore, illumination, detection, lmax=14):
+    def __init__(self, fluorophore, illumination, detection, lmax=14):
         # The simulation requires the expansion of all angular functions in 
         # spherical harmonics (SH). lmax is the cutoff for the maximum l quantum
         # number of the SH basis set, i.e. 0 <= l <= lmax.
@@ -19,7 +19,7 @@ class System:
         # Compute wigner3j coefficients. These are necessary for the evaluation
         # of the product of angular functions from the SH expansion 
         # coefficients.
-        self._wigner3j_prod_coeffs = wigner_3j_prod_3darray(self._l, self._m):
+        self._wigner3j_prod_coeffs = wigner_3j_prod_3darray(self._l, self._m)
 
         # Import the classes containing the parametrization and characteristics
         # of fluorophore, illumination, and detection.
@@ -28,12 +28,14 @@ class System:
         self.detection = detection
         return None
 
-class Fluorophore:
-    def __init__(cross_section_on_blue,
+# Fluorophore classes
+class NegativeSwitcher:
+    def __init__(self,
+                 cross_section_on_blue,
                  lifetime_on,
                  quantum_yield_on2off,
                  diffusion_coefficient,
-                 fluorophore_type='rsFP_offbranch_3states'):
+                 fluorophore_type='rsFP_negative_offbranch_3states'):
         # Cross section in cm2 of the absorption ot the on state with blue light
         self.cross_section_on_blue = cross_section_on_blue
 
@@ -57,36 +59,113 @@ class Fluorophore:
             self.fluorescent_state = 1
         return None
 
+# Illumination classes
 class Illumination:
-    def __init__(power_density_blue,
-                 polarization_blue='x',
-                 blue_wavelength=488, 
-                 numerical_aperture_blue=1.4,
-                 refractive_index_medium=1.518):
-        # Power denstity in W/cm2 of the blue light
-        self.power_density_blue = power_density_blue
+    def __init__(self,
+                 power_density,
+                 polarization='x',
+                 wavelength=488, 
+                 numerical_aperture=1.4,
+                 refractive_index=1.518):
+        # Power denstity in W/cm2
+        self.power_density = power_density
 
-        # Polarization of the blue light.
+        # Polarization of the beam
         # It can be 'x', 'y', or 'c' for circular. 
-        self.polarization_blue = polarization_blue
+        self.polarization = polarization
 
         # Wavelenth of blue light in nanometers.
-        self.blue_wavelength = blue_wavelength
+        self.wavelength = wavelength
 
-        # Numerical aperture of excitation blue light beam
-        self.numerical_aperture_blue = numerical_aperture_blue
+        # Numerical aperture of excitation light beam
+        self.numerical_aperture = numerical_aperture
 
         # Refractive index of the immersion medium of the objective
-        self.refractive_index_medium = refractive_index_medium
-
-        # The maximum angle of the focalized beam with respect to the
-        # propagation direction of the beam is computed.
-        self.max_ray_anlge_blue = np.asin(self.numerical_aperture_blue/
-                                          self.refractive_index_medium)
+        self.refractive_index = refractive_index
         return None
 
-class Detection:
-    def __init__():
+def na_corrected_linear_coeffs(l, m, polarization='x', 
+                               numerical_aperture=1.4,
+                               refractive_index=1.518,
+                               norm='4pi'):
+    # Compute Axelrod high-NA correction coefficients
+    k = axelrod_correction_k(numerical_aperture, refractive_index)
+
+    # Get the expansion coefficients for x, y, and z
+    cx = linear_light_matter_coeffs(l, m, polarization='x', norm=norm)
+    cy = linear_light_matter_coeffs(l, m, polarization='y', norm=norm)
+    cz = linear_light_matter_coeffs(l, m, polarization='z', norm=norm)
+
+    # Compute the SH expansion coefficients
+    # We are assuming that the propagation direction is z.
+    if polarization == 'x':
+        c = k[0]*cz + k[1]*cy + k[2]*cx
+
+    if polarization == 'y':
+        c = k[0]*cz + k[1]*cx + k[2]*cy
+
+    if polarization == 'xy':
+        c = k[0]*cz + (k[1]+k[2])/2*cy + (k[1]+k[2])/2*cx
+    return c
+
+def axelrod_correction_k(numerical_aperture, refractive_index):
+    # Normalized Axelrod correction cartesian coefficients from [Fisz2005] eq.2.
+    # For a linear polarized beam:
+    # - k[0] refers to the propagation direction
+    # - k[1] refers to the perpendicular direction
+    # - k[2] refers to the parallel direction
+
+    # The maximum angle of the focalized beam with respect to the
+    # propagation direction of the beam is computed.
+    # NA = n*sin(theta)
+    max_ray_angle = np.arcsin(numerical_aperture/
+                              refractive_index)
+
+    k = np.zeros(3)
+    costh = np.cos(max_ray_angle)
+    k[0] = 1/6  * (2 -3*costh             +costh**3) / (1 - costh)
+    k[1] = 1/24 * (1 -3*costh +3*costh**2 -costh**3) / (1 - costh)
+    k[2] = 1/8  * (5 -3*costh   -costh**2 -costh**3) / (1 - costh)
+    return k
+
+def linear_light_matter_coeffs(l, m, polarization='x', 
+                                    norm='4pi'):
+    # This function computes the spherical harmonics expansion for linear 
+    # light matter interactions photoselection functions.
+    c = np.zeros(l.shape)
+    if polarization == 'x':
+        c[np.logical_and(l==0, m==0)] = 1/3
+        c[np.logical_and(l==2, m==0)] = -np.sqrt(1/45)
+        c[np.logical_and(l==2, m==2)] = np.sqrt(1/15)
+    if polarization == 'y':
+        c[np.logical_and(l==0, m==0)] = 1/3
+        c[np.logical_and(l==2, m==0)] = -np.sqrt(1/45)
+        c[np.logical_and(l==2, m==2)] = -np.sqrt(1/15)
+    if polarization == 'z':
+        c[np.logical_and(l==0, m==0)] = 1/3
+        c[np.logical_and(l==2, m==0)] = np.sqrt(4/45)
+    if polarization == 'xy':  # circular polarization in the xy plane
+        c[np.logical_and(l==0, m==0)] = 2/3
+        c[np.logical_and(l==2, m==0)] = -2*np.sqrt(1/45)
+    if norm == 'ortho':
+        c = c*np.sqrt(4*np.pi)
+    return c
+
+# Detection classes
+class PolarizedDetection:
+    def __init__(self,
+                 numerical_aperture=1.4,
+                 refractive_index_medium=1.518,
+                 parallel_polarization='x',
+                 perpendicular_polarization='y'):
+        # Numerical aperture of the collection objective
+        self.numerical_aperture = numerical_aperture
+
+        # Refractive index of the immersion medium
+        self.refractive_index_medium = refractive_index_medium
+
+        # Polarization directions of the detection channels
+        self.polarization = polarization
         return None
 
 def quantum_numbers(lmax):
@@ -400,96 +479,105 @@ def plot_proj(grid, clims=[0, 1], cmap=plt.cm.Blues):
 if __name__ == "__main__":
     from codetiming import Timer
 
-    tau = 100e-6 # us anisotropy decay
-    D = 1/(tau*6) # Hz
-    yield_off = 0.001 
-    tau_off = 80e-6 # time constant off switching
-    tau_on_exc = 3.6e-9 # lifetime of excited state
-    k21 = 1 / (tau_off * yield_off)
-    k12 = 1 / tau_on_exc
-    k32 = (1/tau_off) / yield_off
+    rsEGFP2 = NegativeSwitcher(cross_section_on_blue=1e-10,
+                               lifetime_on=3.6e-9,
+                               quantum_yield_on2off=0.001,
+                               diffusion_coefficient=1/(6*100e-6) )
 
-    lmax = 8
-    omega = make_angles(lmax)
-    k21a = (np.sin(omega[0])**2) * k21
-    k21grid, k21c, k21cilm = make_grid(k21a, lmax)
-    plot_proj(k21grid, clims=[])
+    exc488x = Illumination(power_density=500,
+                           polarization='x',
+                           wavelength=488)
 
-    # Test product using cg coeff
-    l, m = quantum_numbers(lmax)
-    t = Timer()
-    t.start()
-    cgp = clebsch_gordan_prod_3darray(l, m)
-    t.stop()
-    # k21prod = kinetic_prod_block(k21c, cgp)
-    # kp = np.cos(omega[0])**2 * np.cos(omega[1]+np.pi)**2
-    # kpgrid, kpc = make_grid(kp, lmax)
-    # k21kpc = k21prod.dot(kpc)
-    # k21kpcilm = sht.shio.SHVectorToCilm(k21kpc)
-    # k21kparray = sht.expand.MakeGridDH(k21kpcilm, sampling=2)
-    # k21kpgrid = sht.shclasses.SHGrid.from_array(k21kparray)
-    # k21kpgrid.plot3d()
+    # tau = 100e-6 # us anisotropy decay
+    # D = 1/(tau*6) # Hz
+    # yield_off = 0.001 
+    # tau_off = 80e-6 # time constant off switching
+    # tau_on_exc = 3.6e-9 # lifetime of excited state
+    # k21 = 1 / (tau_off * yield_off)
+    # k12 = 1 / tau_on_exc
+    # k32 = (1/tau_off) / yield_off
 
-    # Array with all the diffusion tensors/scalar for every specie.
-    # In this case every specie diffuse with the same rate.
-    Dvec = [D, D, D]
+    # lmax = 8
+    # omega = make_angles(lmax)
+    # k21a = (np.sin(omega[0])**2) * k21
+    # k21grid, k21c, k21cilm = make_grid(k21a, lmax)
+    # plot_proj(k21grid, clims=[])
 
-    # Array with kinetic constants connecting the states.
-    Kmatrix = [[   0, k12, 0],
-               [k21a,   0, 0],
-               [   0, k32, 0]]
+    # # Test product using cg coeff
+    # l, m = quantum_numbers(lmax)
+    # t = Timer()
+    # t.start()
+    # cgp = clebsch_gordan_prod_3darray(l, m)
+    # t.stop()
+    # # k21prod = kinetic_prod_block(k21c, cgp)
+    # # kp = np.cos(omega[0])**2 * np.cos(omega[1]+np.pi)**2
+    # # kpgrid, kpc = make_grid(kp, lmax)
+    # # k21kpc = k21prod.dot(kpc)
+    # # k21kpcilm = sht.shio.SHVectorToCilm(k21kpc)
+    # # k21kparray = sht.expand.MakeGridDH(k21kpcilm, sampling=2)
+    # # k21kpgrid = sht.shclasses.SHGrid.from_array(k21kparray)
+    # # k21kpgrid.plot3d()
 
-
-    # # Simplified kinetic scheme
     # # Array with all the diffusion tensors/scalar for every specie.
     # # In this case every specie diffuse with the same rate.
-    # Dvec = [D, D]
+    # Dvec = [D, D, D]
 
     # # Array with kinetic constants connecting the states.
-    # Kmatrix = [[   0,   0],
-    #            [k21a,   0]]
+    # Kmatrix = [[   0, k12, 0],
+    #            [k21a,   0, 0],
+    #            [   0, k32, 0]]
 
-    t = Timer()
-    t.start()
-    M = kinetics_diffusion_matrix(Dvec, Kmatrix, lmax)
-    t.stop()
 
-    # initial conditions
-    c0a = omega[0]*0 +1
-    c0grid, c0vec, c0cilm = make_grid(c0a, lmax)
-    c0 = np.zeros(((lmax+1)**2,3))
-    c0[:,0] = c0vec
-    # p0_1 = 1 + np.cos(omega[0]) * 0
-    # p0_1grid, c0_1 = make_grid(p0_1, lmax)
-    # c0[:,0] =c0_1
+    # # # Simplified kinetic scheme
+    # # # Array with all the diffusion tensors/scalar for every specie.
+    # # # In this case every specie diffuse with the same rate.
+    # # Dvec = [D, D]
 
-    time = np.logspace(-11,-3,128)
-    # time = np.linspace(0,1e-3,1000)
-    t.start()
-    c, L, U =solve_evolution(M, c0, time)
-    t.stop()
-    # plt.imshow(np.real(Dblock))
+    # # # Array with kinetic constants connecting the states.
+    # # Kmatrix = [[   0,   0],
+    # #            [k21a,   0]]
+
+    # t = Timer()
+    # t.start()
+    # M = kinetics_diffusion_matrix(Dvec, Kmatrix, lmax)
+    # t.stop()
+
+    # # initial conditions
+    # c0a = omega[0]*0 +1
+    # c0grid, c0vec, c0cilm = make_grid(c0a, lmax)
+    # c0 = np.zeros(((lmax+1)**2,3))
+    # c0[:,0] = c0vec
+    # # p0_1 = 1 + np.cos(omega[0]) * 0
+    # # p0_1grid, c0_1 = make_grid(p0_1, lmax)
+    # # c0[:,0] =c0_1
+
+    # time = np.logspace(-11,-3,128)
+    # # time = np.linspace(0,1e-3,1000)
+    # t.start()
+    # c, L, U =solve_evolution(M, c0, time)
+    # t.stop()
+    # # plt.imshow(np.real(Dblock))
     
-    Uinv = np.linalg.inv(U)
-    ci = np.matmul(U, np.diag(np.exp(L*100e-6)))
-    ci = np.matmul(ci, Uinv)
-    plt.imshow(np.real(ci))
+    # Uinv = np.linalg.inv(U)
+    # ci = np.matmul(U, np.diag(np.exp(L*100e-6)))
+    # ci = np.matmul(ci, Uinv)
+    # plt.imshow(np.real(ci))
 
 
-    t.start()
-    np.linalg.inv(U)
-    t.stop()
+    # t.start()
+    # np.linalg.inv(U)
+    # t.stop()
 
-    cplot = c[:,0,:]
-    cplotgrid = vecs2grids(cplot)
+    # cplot = c[:,0,:]
+    # cplotgrid = vecs2grids(cplot)
 
-    plt.figure()
-    plt.plot(time, cplot.T)
-    plt.xscale('log')
+    # plt.figure()
+    # plt.plot(time, cplot.T)
+    # plt.xscale('log')
 
-    plot_proj(cplotgrid[100])
+    # plot_proj(cplotgrid[100])
 
-    # cplotgrid[10].plot()
-    # plt.imshow(M)
-    # plt.show()
-    # plt.imshow(cplotgrid[20].data, vmin=0, vmax=1)
+    # # cplotgrid[10].plot()
+    # # plt.imshow(M)
+    # # plt.show()
+    # # plt.imshow(cplotgrid[20].data, vmin=0, vmax=1)
