@@ -1,11 +1,93 @@
-
 import numpy as np
 import matplotlib.pyplot as plt
-import spherical as sf 
-import pyshtools as sht 
+import pyshtools as sht
+import spherical as sf  # currently not used, might be removed in the future
 
 # This module solves analytically the diffusion and kinetics
 # in STARSS experiments.
+
+class System:
+    def __init__(fluorophore, illumination, detection, lmax=14):
+        # The simulation requires the expansion of all angular functions in 
+        # spherical harmonics (SH). lmax is the cutoff for the maximum l quantum
+        # number of the SH basis set, i.e. 0 <= l <= lmax.
+        self.lmax = lmax
+
+        # Compute arrays with quantum numbers l and m of the SH basis set.
+        self._l, self._m = quantum_numbers(lmax)
+
+        # Compute wigner3j coefficients. These are necessary for the evaluation
+        # of the product of angular functions from the SH expansion 
+        # coefficients.
+        self._wigner3j_prod_coeffs = wigner_3j_prod_3darray(self._l, self._m):
+
+        # Import the classes containing the parametrization and characteristics
+        # of fluorophore, illumination, and detection.
+        self.fluorophore = fluorophore
+        self.illumination = illumination
+        self.detection = detection
+        return None
+
+class Fluorophore:
+    def __init__(cross_section_on_blue,
+                 lifetime_on,
+                 quantum_yield_on2off,
+                 diffusion_coefficient,
+                 fluorophore_type='rsFP_offbranch_3states'):
+        # Cross section in cm2 of the absorption ot the on state with blue light
+        self.cross_section_on_blue = cross_section_on_blue
+
+        # Lifetime of the on excited state in seconds
+        self.lifetime_on = lifetime_on
+
+        # Quantum yield of an off-switching event from the on excited state
+        self.quantum_yield_on2off = quantum_yield_on2off
+
+        # Rotational diffusion coefficient in Hertz
+        self.diffusion_coefficient = diffusion_coefficient
+
+        # Label describing the fluorophore type
+        self.fluorophore_type = fluorophore_type
+        
+        if fluorophore_type == 'rsFP_offbranch_3states':
+            # Number of states in the kinetic model
+            self.n_states = 3
+
+            # Index of the fluorescent state
+            self.fluorescent_state = 1
+        return None
+
+class Illumination:
+    def __init__(power_density_blue,
+                 polarization_blue='x',
+                 blue_wavelength=488, 
+                 numerical_aperture_blue=1.4,
+                 refractive_index_medium=1.518):
+        # Power denstity in W/cm2 of the blue light
+        self.power_density_blue = power_density_blue
+
+        # Polarization of the blue light.
+        # It can be 'x', 'y', or 'c' for circular. 
+        self.polarization_blue = polarization_blue
+
+        # Wavelenth of blue light in nanometers.
+        self.blue_wavelength = blue_wavelength
+
+        # Numerical aperture of excitation blue light beam
+        self.numerical_aperture_blue = numerical_aperture_blue
+
+        # Refractive index of the immersion medium of the objective
+        self.refractive_index_medium = refractive_index_medium
+
+        # The maximum angle of the focalized beam with respect to the
+        # propagation direction of the beam is computed.
+        self.max_ray_anlge_blue = np.asin(self.numerical_aperture_blue/
+                                          self.refractive_index_medium)
+        return None
+
+class Detection:
+    def __init__():
+        return None
 
 def quantum_numbers(lmax):
     # Generate arrays with quantum numbers l and m
