@@ -3,18 +3,32 @@ import matplotlib.pyplot as plt
 import pyshtools as sht
 import spherical as sf  # currently not used, might be removed in the future
 
-# This module solves analytically the diffusion and kinetics
-# in STARSS experiments.
+'''
+This module solves analytically the rotational diffusion and kinetics
+in flurescence experiments with complex photophysics.
+An arbitrary kinetic scheme can be implemented using fluorophore classes.
+'''
 
 class System:
-    def __init__(self, fluorophore, illumination, detection, lmax=14):
+    def __init__(self,
+                 fluorophore,
+                 illumination,
+                 detection=[],
+                 lmax=8,
+                 norm='4pi',
+                 ):
         # The simulation requires the expansion of all angular functions in 
         # spherical harmonics (SH). lmax is the cutoff for the maximum l quantum
         # number of the SH basis set, i.e. 0 <= l <= lmax.
+        #
+        # The '4pi' normalization is reccomended because the coefficients for
+        # l=0 and m=0 for the angular probability distributions give directly
+        # the state populations.
         self.lmax = lmax
+        self.norm = norm
 
         # Compute arrays with quantum numbers l and m of the SH basis set.
-        self._l, self._m = quantum_numbers(lmax)
+        self._l, self._m = quantum_numbers(self.lmax)
 
         # Compute wigner3j coefficients. These are necessary for the evaluation
         # of the product of angular functions from the SH expansion 
@@ -26,56 +40,153 @@ class System:
         self.fluorophore = fluorophore
         self.illumination = illumination
         self.detection = detection
+
+        # Photon flux product coefficients based on wigner3j symbols
+        self._F = self.illumination.photon_flux_prod_coeffs(self._l,
+                 self._m,
+                 self._wigner3j_prod_coeffs)
+
+        # Compute the detector collection coefficients in SH basis
+        self._c_det = self.detection.detector_coeffs(self._l, self._m)
         return None
+
+    def detector_signals(self, time):
+        # Compute the flurescence signal registered in the detectors
+        c = self.solve(time)
+
+        # Multiply the populations by the quantum yields of fluorescence.
+        # Usually, only the fluorescent state will have a quantum yield 
+        # different from zero.
+        c_fluo = c * self.fluorophore.quantum_yield_fluo[:,None,None]
+
+        # Get the SH coefficients for the collection of the detectors
+        ndetectors = self._c_det.shape[0]
+
+        # Initialize signal array and compute signals
+        s = np.zeros( (ndetectors, time.size) )
+        for i in range(ndetectors):
+            c_det_i = self._c_det[i]
+            s[i] = np.sum(c_det_i[None,:,None] * c_fluo, axis=(0,1))
+        if self.norm == '4pi':
+            s = s*4*np.pi
+        self._s = s
+        return s
+            
+    def solve(self, time):
+        M = self.diffusion_kinetics_matrix()
+        c0 = self.fluorophore.starting_coeffs(self._l, self._m)
+        c, _, _ = solve_evolution(M, c0, time)
+        self._c0 = c0
+        self._c = c
+        return c
+
+    def diffusion_kinetics_matrix(self):
+        D = self.fluorophore.diffusion_matrix(self._l, self._m)
+        K = self.fluorophore.kinetics_matrix(self._l, self._m, self._F)
+        M = diffusion_kinetics_matrix(D, K)
+        self._D = D
+        self._K = K
+        self._M = M
+        return M
+
+def anisotropy(signals):
+    return (signals[0] - signals[1]) / (signals[0] + 2*signals[1])
 
 # Fluorophore classes
 class NegativeSwitcher:
     def __init__(self,
                  cross_section_on_blue,
                  lifetime_on,
-                 quantum_yield_on2off,
-                 diffusion_coefficient,
+                 quantum_yield_on_to_off,
+                 quantum_yield_on_fluo=1,
+                 diffusion_coefficient=1/(6*20e-9),
                  fluorophore_type='rsFP_negative_offbranch_3states'):
         # Cross section in cm2 of the absorption ot the on state with blue light
-        self.cross_section_on_blue = cross_section_on_blue
+        self.cross_section_on_blue = cross_section_on_blue  # [cm2]
 
         # Lifetime of the on excited state in seconds
-        self.lifetime_on = lifetime_on
+        self.lifetime_on = lifetime_on  # [s]
 
-        # Quantum yield of an off-switching event from the on excited state
-        self.quantum_yield_on2off = quantum_yield_on2off
+        # Quantum yield of an off-switching event from the on excited state and
+        # fluorescence from the on state
+        self.quantum_yield_on_to_off = quantum_yield_on_to_off
+        self.quantum_yield_on_fluo = quantum_yield_on_fluo
 
         # Rotational diffusion coefficient in Hertz
-        self.diffusion_coefficient = diffusion_coefficient
+        self.diffusion_coefficient = diffusion_coefficient  # [Hz]
 
         # Label describing the fluorophore type
         self.fluorophore_type = fluorophore_type
         
-        if fluorophore_type == 'rsFP_offbranch_3states':
+        if self.fluorophore_type == 'rsFP_negative_offbranch_3states':
             # Number of states in the kinetic model
-            self.n_states = 3
+            self.nspecies = 3
 
             # Index of the fluorescent state
-            self.fluorescent_state = 1
+            # Here, only one fluorescent state is assumed.
+            # This is not necessary in general.
+            self.quantum_yield_fluo = [0, self.quantum_yield_on_fluo, 0]
+            self.quantum_yield_fluo = np.array(self.quantum_yield_fluo)
+
+            # Population at the beginning of the experiment
+            # Here we put all the population in the on state.
+            self.starting_populations = [1, 0, 0]
         return None
 
+    def kinetics_matrix(self, l, m, F):
+        # Compute the kinetics matrix expanded in l, m coefficients
+        # Note that the order of the laser in F must be consistent with the
+        # choices made in the fluorophore class.
+        # In this case F[0] is the blue light.
+
+        # l, m, and F must be provided by outside.
+        # l and m are the quantum numbers of SH, while F encodes the info about
+        # photon flux and it's angular dependence.
+
+        # Initialize arrays
+        Feye = np.eye( (l.size) )
+        K = np.zeros( (self.nspecies, self.nspecies, l.size, l.size))
+
+        # Put the kinetic constants connecting the right species
+        # K[1,0] is the kinetic constant for the proces 1 <- 0.
+        K[1,0] = F[0] * self.cross_section_on_blue
+        K[0,1] = Feye / self.lifetime_on
+        K[2,1] = Feye / self.lifetime_on / self.quantum_yield_on_to_off
+        return K
+    
+    def diffusion_matrix(self, l, m):
+        # Compute the diffusion matrix
+        # Here an isotropic diffusion model is employed, every state has also
+        # the same rotational diffusion properties.
+        D = isotropic_diffusion_matrix(l, m,
+                self.diffusion_coefficient,
+                self.nspecies)
+        return D
+
+    def starting_coeffs(self, l, m):
+        # Compute the starting values for the population SH coefficients
+        c0 = np.zeros( (self.nspecies, l.size) )
+        c0[:,0] = self.starting_populations
+        return c0
+
+
 # Illumination classes
-class Illumination:
+class SingleLaser:
     def __init__(self,
                  power_density,
                  polarization='x',
                  wavelength=488, 
                  numerical_aperture=1.4,
                  refractive_index=1.518):
-        # Power denstity in W/cm2
-        self.power_density = power_density
+        # Compute the photon flux from power density and wavelength
+        self.power_density = power_density  # [W/cm2]
+        self.wavelength = wavelength  # [nm]
+        self.photon_flux = photon_flux(self.power_density,
+                                       self.wavelength)  # [photons/cm2]
 
         # Polarization of the beam
         # It can be 'x', 'y', or 'c' for circular. 
         self.polarization = polarization
-
-        # Wavelenth of blue light in nanometers.
-        self.wavelength = wavelength
 
         # Numerical aperture of excitation light beam
         self.numerical_aperture = numerical_aperture
@@ -83,41 +194,80 @@ class Illumination:
         # Refractive index of the immersion medium of the objective
         self.refractive_index = refractive_index
         return None
+    
+    def photon_flux_prod_coeffs(self, l, m, wigner_3j_prod_coeffs):
+        # Compute the prod_matrix for the angular dependence of the photon flux.
+        # When the photon flux is multiplied by the absorbtion cross-section
+        # the kinetic rate of absortion is obtained.
+        c = na_corrected_linear_coeffs(l, m,
+                polarization = self.polarization,
+                numerical_aperture = self.numerical_aperture,
+                refractive_index = self.refractive_index,
+                )
+        
+        # Return the matrix F as a 3 dimensional array, this will be helpfull
+        # when more than one laser is used to excite the sample.
+        F = np.zeros((1, l.size, l.size))
+        F[0] = kinetic_prod_block(c, wigner_3j_prod_coeffs) * self.photon_flux
+        return F
 
-def na_corrected_linear_coeffs(l, m, polarization='x', 
+def photon_flux(power_density, wavelength):    
+    # Compute the photon flux from power density and wavelength.
+    # The wavelength is used to compute the photon energy
+    # photon_energy = h*c/wavelength
+    # The wavelength is coverted in meters.
+    light_speed = 299792457  # [m/s]
+    h_planck = 6.62607015e-34  # [J*s]
+    photon_energy = h_planck * light_speed / (wavelength*1e-9)  # [J]
+    photon_flux = power_density / photon_energy  # [photons/cm2]
+    return photon_flux
+
+def na_corrected_linear_coeffs(l, m,
+                               polarization='x', 
                                numerical_aperture=1.4,
                                refractive_index=1.518,
                                norm='4pi'):
     # Compute Axelrod high-NA correction coefficients
     k = axelrod_correction_k(numerical_aperture, refractive_index)
 
-    # Get the expansion coefficients for x, y, and z
+    # Get the SH expansion coefficients for x, y, and z photoselections.
     cx = linear_light_matter_coeffs(l, m, polarization='x', norm=norm)
     cy = linear_light_matter_coeffs(l, m, polarization='y', norm=norm)
     cz = linear_light_matter_coeffs(l, m, polarization='z', norm=norm)
 
     # Compute the SH expansion coefficients
     # We are assuming that the propagation direction is z.
+    # If z polarization is chosen, the propagation direction is assumed as x.
     if polarization == 'x':
         c = k[0]*cz + k[1]*cy + k[2]*cx
 
     if polarization == 'y':
         c = k[0]*cz + k[1]*cx + k[2]*cy
 
+    if polarization == 'z':
+        c = k[0]*cx + k[1]*cy + k[2]*cz
+
     if polarization == 'xy':
         c = k[0]*cz + (k[1]+k[2])/2*cy + (k[1]+k[2])/2*cx
+
+    # c are the SH coefficients of the expanded angular function.
     return c
 
 def axelrod_correction_k(numerical_aperture, refractive_index):
-    # Normalized Axelrod correction cartesian coefficients from [Fisz2005] eq.2.
+    # Normalized Axelrod correction cartesian coefficients from [Fisz2005] eq.(2).
     # For a linear polarized beam:
     # - k[0] refers to the propagation direction
     # - k[1] refers to the perpendicular direction
     # - k[2] refers to the parallel direction
+    # In the same paper the correction for the spherical coordinates problem are
+    # discussed. It will be useful when adding the photoswithing angle.
+    # Note that k[0] + k[1] + k[2] = 1. In other words, for a randomly oriented
+    # sample in linear excitation, the total number of excited molecules is the
+    # same regardless of the NA.
 
     # The maximum angle of the focalized beam with respect to the
     # propagation direction of the beam is computed.
-    # NA = n*sin(theta)
+    # NA = n*sin(theta), thus theta = arcsin(NA/n).
     max_ray_angle = np.arcsin(numerical_aperture/
                               refractive_index)
 
@@ -132,6 +282,10 @@ def linear_light_matter_coeffs(l, m, polarization='x',
                                     norm='4pi'):
     # This function computes the spherical harmonics expansion for linear 
     # light matter interactions photoselection functions.
+    # For example, the function (r dot x)^2 is expanded and has only three non 
+    # zero coefficients, in particular l=0, m=0 and l=2, m=0,2. r and x are 
+    # versors. In this function few polarizations are expressed in terms of
+    # their SH coefficients.
     c = np.zeros(l.shape)
     if polarization == 'x':
         c[np.logical_and(l==0, m==0)] = 1/3
@@ -145,28 +299,44 @@ def linear_light_matter_coeffs(l, m, polarization='x',
         c[np.logical_and(l==0, m==0)] = 1/3
         c[np.logical_and(l==2, m==0)] = np.sqrt(4/45)
     if polarization == 'xy':  # circular polarization in the xy plane
-        c[np.logical_and(l==0, m==0)] = 2/3
-        c[np.logical_and(l==2, m==0)] = -2*np.sqrt(1/45)
+        c[np.logical_and(l==0, m==0)] = 1/3
+        c[np.logical_and(l==2, m==0)] = -np.sqrt(1/45)
     if norm == 'ortho':
-        c = c*np.sqrt(4*np.pi)
+        c = c/np.sqrt(4*np.pi)
+    # Normalize the coefficients so the total integral of the function is 1
+    c = c/c[0]
     return c
 
 # Detection classes
 class PolarizedDetection:
     def __init__(self,
+                 polarization=['x', 'y'],
                  numerical_aperture=1.4,
-                 refractive_index_medium=1.518,
-                 parallel_polarization='x',
-                 perpendicular_polarization='y'):
+                 refractive_index=1.518,
+                 ):
         # Numerical aperture of the collection objective
         self.numerical_aperture = numerical_aperture
 
         # Refractive index of the immersion medium
-        self.refractive_index_medium = refractive_index_medium
+        self.refractive_index = refractive_index
 
         # Polarization directions of the detection channels
         self.polarization = polarization
         return None
+
+    def detector_coeffs(self, l, m):
+        # Compute the SH expansion for the angular collection functions of the
+        # detectors
+        ndetectors = np.size(self.polarization)
+        c = np.zeros((ndetectors, l.size))
+
+        for i in np.arange(ndetectors):
+            c[i] = na_corrected_linear_coeffs(l, m,
+                polarization=self.polarization[i],
+                numerical_aperture=self.numerical_aperture,
+                refractive_index=self.refractive_index,
+                )
+        return c
 
 def quantum_numbers(lmax):
     # Generate arrays with quantum numbers l and m
@@ -318,16 +488,46 @@ def kinetic_prod_block(kvec, cgp):
             kblock[i,j] = cgi.dot(kvec)
     return kblock
 
-def diffusion_block(D, l, m):
+def isotropic_diffusion_block(l, m, diffusion_coefficient):
     # Make the diffusion diagonal block for isotropic rotational diffusion
-    ddiag = -l*(l+1)*D
+    ddiag = -l*(l+1)*diffusion_coefficient
     dblock = np.zeros([l.size, l.size])
     np.fill_diagonal(dblock, ddiag)
     return dblock
 
-def kinetics_diffusion_matrix(Dvec, Kmatrix, lmax):
+def isotropic_diffusion_matrix(l, m, diffusion_coefficient, nspecies):
+    # Make all the diffusion matrices for all the species assuming isotropic
+    # rotational diffusion and the same rotational diffusion coefficient for
+    # every species.
+    D = np.zeros( (nspecies, l.size, l.size) )
+    D[0] = isotropic_diffusion_block(l, m, diffusion_coefficient)
+    for i in np.arange(1,nspecies):
+        D[i] = D[0]
+    return D
+
+def diffusion_kinetics_matrix(D, K):
     # Create the full kinetic diffusion matrix expanded in sh
-    #TODO: this function doesn't work
+    nspecies = D.shape[0]
+    M = np.zeros(K.shape)
+
+    for i in range(nspecies):
+        for j in range(nspecies):
+            # Add the rotational diffusion blocks on the diagonal
+            if i==j:
+                M[i,i] = D[i]
+            # Add the kinetics blocks in all the slots
+            M[i,j] = M[i,j] + K[i,j]
+
+    # Add on the diagonal the kinetics contributions that deplete the states
+    for i in range(nspecies):
+        for j in range(nspecies):
+            if i != j:
+                M[i,i] = M[i,i] - M[j,i]
+    return M
+
+def kinetics_diffusion_matrix_lmax(Dvec, Kmatrix, lmax):
+    # Create the full kinetic diffusion matrix expanded in sh staring from scratch.
+    # In this routine the expansion in l,m are included.
     assert len(Dvec) == len(Kmatrix)
 
     # Compute quantum number arrays and cg coefficients
@@ -341,22 +541,18 @@ def kinetics_diffusion_matrix(Dvec, Kmatrix, lmax):
     ncoeff = l.size  # number of spherical harmonics expansion coefficients
     nspecies = len(Dvec)  # number of species
 
-    #TODO: Create M as a 2d list of matrices, this will help with the computation
-    # of the full matrix.
-
     M = np.array( [ [np.zeros([ncoeff,ncoeff])]*nspecies ]*nspecies )
     for i in range(nspecies):
         for j in range(nspecies):
             if i == j:
-                M[i,j] = diffusion_block(Dvec[i], l, m)
+                M[i,j] = isotropic_diffusion_block(l, m, Dvec[i])
             # Create blocks of the kinetic matrix rates
             else:
                 k = Kmatrix[i][j]
                 if np.size(k) == 1:
                     M[i,j] = np.eye(ncoeff).dot(k)
                 else:
-                    kgrid, kvec, kcilm = make_grid(k, lmax)
-                    M[i,j] = kinetic_prod_block(kvec, cgp)
+                    M[i,j] = kinetic_prod_block(k, cgp)
 
     for i in range(nspecies):
         for j in range(nspecies):
@@ -404,7 +600,7 @@ def solve_evolution(M, c0, time):
     for i in np.arange(time.size):
         ci = np.matmul(ci0, np.diag(np.exp(L*time[i])))
         ci = np.matmul(ci, UTr)
-        c[:,i] = ci
+        c[:,i] = np.real(ci)  # Discard small rounding error complex parts
 
     # Reshape the coefficients into a 3D array, separating the coefficients
     # for each species.
@@ -481,12 +677,8 @@ if __name__ == "__main__":
 
     rsEGFP2 = NegativeSwitcher(cross_section_on_blue=1e-10,
                                lifetime_on=3.6e-9,
-                               quantum_yield_on2off=0.001,
+                               quantum_yield_on_to_off=0.001,
                                diffusion_coefficient=1/(6*100e-6) )
-
-    exc488x = Illumination(power_density=500,
-                           polarization='x',
-                           wavelength=488)
 
     # tau = 100e-6 # us anisotropy decay
     # D = 1/(tau*6) # Hz
