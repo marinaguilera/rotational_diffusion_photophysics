@@ -9,6 +9,10 @@ in flurescence experiments with complex photophysics.
 An arbitrary kinetic scheme can be implemented using fluorophore classes.
 '''
 
+################################################################################
+# Classes for programming experiments
+################################################################################
+
 class System:
     def __init__(self,
                  fluorophore,
@@ -41,17 +45,21 @@ class System:
         self.illumination = illumination
         self.detection = detection
 
-        # Photon flux product coefficients based on wigner3j symbols
-        self._F = self.illumination.photon_flux_prod_coeffs(self._l,
-                 self._m,
-                 self._wigner3j_prod_coeffs)
-
-        # Compute the detector collection coefficients in SH basis
-        self._c_det = self.detection.detector_coeffs(self._l, self._m)
+        '''
+        Small description of hidden variables
+        _F is the photon flux prod matrix, when multiplied by the cross section
+            gives the absorption rate prod matrix as a function of the angle.
+        _c_exc are SH coefficients for the orientational functions behind F. 
+            It can be interpred as the number of photons that would be absorbed 
+            by a molecule with cross section 1cm2 as a function of the 
+            orientation of the dipole.
+        '''
         return None
 
     def detector_signals(self, time):
         # Compute the flurescence signal registered in the detectors
+        # Firt, solve the diffusion/kinetics problem and get the SH coefficients
+        # of populations.
         c = self.solve(time)
 
         # Multiply the populations by the quantum yields of fluorescence.
@@ -59,16 +67,20 @@ class System:
         # different from zero.
         c_fluo = c * self.fluorophore.quantum_yield_fluo[:,None,None]
 
-        # Get the SH coefficients for the collection of the detectors
-        ndetectors = self._c_det.shape[0]
+        # Compute the SH coefficients for the collection functions of 
+        # the detectors
+        c_det = self.detection.detector_coeffs(self._l, self._m)
+        ndetectors = c_det.shape[0]
 
         # Initialize signal array and compute signals
         s = np.zeros( (ndetectors, time.size) )
         for i in range(ndetectors):
-            c_det_i = self._c_det[i]
-            s[i] = np.sum(c_det_i[None,:,None] * c_fluo, axis=(0,1))
+            s[i] = np.sum(c_det[i][None,:,None] * c_fluo, axis=(0,1))
         if self.norm == '4pi':
-            s = s*4*np.pi
+            s = s/4*np.pi
+
+        # Save variables, mainly for debugging.
+        self._c_det = c_det
         self._s = s
         return s
             
@@ -76,14 +88,30 @@ class System:
         M = self.diffusion_kinetics_matrix()
         c0 = self.fluorophore.starting_coeffs(self._l, self._m)
         c, _, _ = solve_evolution(M, c0, time)
+        # Save variables, mainly for debugging.
         self._c0 = c0
         self._c = c
         return c
 
     def diffusion_kinetics_matrix(self):
+        # Preliminary computations based on the illumination class.
+        # Photon flux product coefficients based on wigner3j symbols
+        F, c_exc = self.illumination.photon_flux_prod_coeffs(
+                                                    self._l,
+                                                    self._m,
+                                                    self._wigner3j_prod_coeffs)
+
+        # The fluorophore class must provide the diffusion matrix and the
+        # kinetics matrix. The kinetics matrix rely in the photon flux prod
+        # matrix self._F.
+        #TODO: Enable pulsed experiments computing M for every time window.
         D = self.fluorophore.diffusion_matrix(self._l, self._m)
-        K = self.fluorophore.kinetics_matrix(self._l, self._m, self._F)
+        K = self.fluorophore.kinetics_matrix(self._l, self._m, F)
         M = diffusion_kinetics_matrix(D, K)
+        
+        # Save variables, mainly for debugging.
+        self._c_exc = c_exc
+        self._F = F
         self._D = D
         self._K = K
         self._M = M
@@ -92,12 +120,17 @@ class System:
 def anisotropy(signals):
     return (signals[0] - signals[1]) / (signals[0] + 2*signals[1])
 
+#####################
 # Fluorophore classes
+#####################
 class NegativeSwitcher:
     def __init__(self,
-                 cross_section_on_blue,
-                 lifetime_on,
-                 quantum_yield_on_to_off,
+                 cross_section_on_blue=0,
+                 cross_section_off_purple=0,
+                 lifetime_on=3e-9,
+                 lifetime_off=16e-12,
+                 quantum_yield_on_to_off=0.001,
+                 quantum_yield_off_to_on=0.2,
                  quantum_yield_on_fluo=1,
                  diffusion_coefficient=1/(6*20e-9),
                  fluorophore_type='rsFP_negative_offbranch_3states'):
@@ -169,8 +202,9 @@ class NegativeSwitcher:
         c0[:,0] = self.starting_populations
         return c0
 
-
+######################
 # Illumination classes
+######################
 class SingleLaser:
     def __init__(self,
                  power_density,
@@ -199,17 +233,68 @@ class SingleLaser:
         # Compute the prod_matrix for the angular dependence of the photon flux.
         # When the photon flux is multiplied by the absorbtion cross-section
         # the kinetic rate of absortion is obtained.
-        c = na_corrected_linear_coeffs(l, m,
+        c_exc = np.zeros((1, l.size))
+        c_exc[0] = na_corrected_linear_coeffs(l, m,
                 polarization = self.polarization,
                 numerical_aperture = self.numerical_aperture,
                 refractive_index = self.refractive_index,
-                )
+                ) * self.photon_flux
         
         # Return the matrix F as a 3 dimensional array, this will be helpfull
         # when more than one laser is used to excite the sample.
         F = np.zeros((1, l.size, l.size))
-        F[0] = kinetic_prod_block(c, wigner_3j_prod_coeffs) * self.photon_flux
-        return F
+        F[0] = kinetic_prod_block(c_exc[0], wigner_3j_prod_coeffs)
+        return F, c_exc
+
+class ModulatedLasers:
+    def __init__(self,
+                 power_density,
+                 polarization=['x', 'xy'],
+                 wavelength=[405, 488],
+                 modulation=[[1, 0], [1, 1]],
+                 time_windows=[250e-9, 1e-3],
+                 time0=[250e-9],
+                 numerical_aperture=1.4,
+                 refractive_index=1.518):
+        # Compute the photon flux from power density and wavelength
+        self.power_density = np.array(power_density)  # [W/cm2]
+        self.wavelength = np.array(wavelength)  # [nm]
+        self.photon_flux = photon_flux(self.power_density,
+                                       self.wavelength)  # [photons/cm2]
+
+        # Polarization of the beam
+        # It can be 'x', 'y', or 'c' for circular. 
+        self.polarization = polarization
+
+        # Numerical aperture of excitation light beam
+        self.numerical_aperture = numerical_aperture
+
+        # Refractive index of the immersion medium of the objective
+        self.refractive_index = refractive_index
+        return None
+    
+    def photon_flux_prod_coeffs(self, l, m, wigner_3j_prod_coeffs):
+        # Compute the prod_matrix for the angular dependence of the photon flux.
+        # When the photon flux is multiplied by the absorbtion cross-section
+        # the kinetic rate of absortion is obtained.
+
+        # Initialize arrays for SH photoselection coefficients in c, and 
+        # product coefficients in F.
+        nlasers = np.size(self.polarization)
+        c_exc = np.zeros((nlasers, l.size))
+        F = np.zeros((nlasers, l.size, l.size))
+        for i in np.arange(nlasers):
+            c_exc[i] = na_corrected_linear_coeffs(l, m,
+                    polarization = self.polarization[i],
+                    numerical_aperture = self.numerical_aperture,
+                    refractive_index = self.refractive_index,
+                    ) * self.photon_flux[i]
+            F[i] = kinetic_prod_block(c_exc[i], 
+                        wigner_3j_prod_coeffs)
+        
+        # F is a 3 dimensional array. The firt index is for the lasers, the last
+        # indexes are for lm of SH.
+        return F, c_exc
 
 def photon_flux(power_density, wavelength):    
     # Compute the photon flux from power density and wavelength.
@@ -303,11 +388,14 @@ def linear_light_matter_coeffs(l, m, polarization='x',
         c[np.logical_and(l==2, m==0)] = -np.sqrt(1/45)
     if norm == 'ortho':
         c = c/np.sqrt(4*np.pi)
+
     # Normalize the coefficients so the total integral of the function is 1
-    c = c/c[0]
+    # c = c/c[0]  # For now it is not on, because we loose the probability connection
     return c
 
+###################
 # Detection classes
+###################
 class PolarizedDetection:
     def __init__(self,
                  polarization=['x', 'y'],
@@ -337,6 +425,11 @@ class PolarizedDetection:
                 refractive_index=self.refractive_index,
                 )
         return c
+
+
+################################################################################
+# Engine of the rotational diffusion and kinetics solver
+################################################################################
 
 def quantum_numbers(lmax):
     # Generate arrays with quantum numbers l and m
@@ -454,38 +547,9 @@ def wigner_3j_all_l_m0(l, l1, l2, lmax):
     w3jl = w3jl[l]
     return w3jl
 
-def make_angles(lmax):
-    # Create angles for computing your functions of theta and phy
-    cos2 = sht.SHGrid.from_zeros(lmax=lmax, kind='real')
-    # cos2 = sht.shclasses.DHComplexGrid.from_zeros(lmax=2)
-    theta = cos2.lats()
-    phi = cos2.lons()
-    omega = np.meshgrid(theta,phi)
-    omega[0] = omega[0].transpose()*np.pi/180
-    omega[1] = omega[1].transpose()*np.pi/180
-    return omega
-
-def make_grid(farray, lmax):
-    # Make a sht grid from array data and expand in sh up to lmax
-    fgrid = sht.SHGrid.from_zeros(lmax=lmax, kind='real')
-    # fgrid = sht.SHGrid.from_array(farray)
-    fgrid.data = farray
-    fcilm = fgrid.expand(normalization='4pi')
-    fvec = sht.shio.SHCilmToVector(fcilm.coeffs, lmax)
-
-    # Remove small coefficients from errors
-    fvec[np.abs(fvec)<1e-6] = 0 
-    return fgrid, fvec, fcilm
-
 def kinetic_prod_block(kvec, cgp):
     # Create a kinetic constant block for multiplication using cg coeffs.
-    n = kvec.size
-    kblock = np.zeros([n,n])
-    for i in range(n):
-        for j in range(n):
-            # Get slice of CG coefficients for the total l and m
-            cgi = cgp[:,j,i].transpose()
-            kblock[i,j] = cgi.dot(kvec)
+    kblock = np.transpose(cgp, [2, 1, 0]).dot(kvec)
     return kblock
 
 def isotropic_diffusion_block(l, m, diffusion_coefficient):
@@ -607,7 +671,34 @@ def solve_evolution(M, c0, time):
     c = np.reshape(c, (nspecies, ncoeffs, time.size))
     return c, L, U
 
+
+################################################################################
 # Auxiliary functions
+################################################################################
+
+def make_angles(lmax):
+    # Create angles for computing your functions of theta and phy
+    cos2 = sht.SHGrid.from_zeros(lmax=lmax, kind='real')
+    # cos2 = sht.shclasses.DHComplexGrid.from_zeros(lmax=2)
+    theta = cos2.lats()
+    phi = cos2.lons()
+    omega = np.meshgrid(theta,phi)
+    omega[0] = omega[0].transpose()*np.pi/180
+    omega[1] = omega[1].transpose()*np.pi/180
+    return omega
+
+def make_grid(farray, lmax):
+    # Make a sht grid from array data and expand in sh up to lmax
+    fgrid = sht.SHGrid.from_zeros(lmax=lmax, kind='real')
+    # fgrid = sht.SHGrid.from_array(farray)
+    fgrid.data = farray
+    fcilm = fgrid.expand(normalization='4pi')
+    fvec = sht.shio.SHCilmToVector(fcilm.coeffs, lmax)
+
+    # Remove small coefficients from errors
+    fvec[np.abs(fvec)<1e-6] = 0 
+    return fgrid, fvec, fcilm
+
 def vecs2grids(cvecs):
     # Convert an array of vectors of SH coefficients to an array of SH grids
     cgridarray = []
@@ -625,7 +716,11 @@ def vec2grid(cvec, lmax=32):
     cgrid = sht.shclasses.SHGrid.from_array(carr)
     return cgrid
 
+
+################################################################################
 # Plotting functions
+################################################################################
+
 def plot_prob_sphere(grid):
     prob = grid.data
     omega = make_angles(grid.lmax)
