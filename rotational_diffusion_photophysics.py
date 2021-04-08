@@ -618,10 +618,10 @@ def vecs2grids(cvecs):
         cgridarray.append(cgrid)
     return cgridarray
 
-def vec2grid(cvec):
+def vec2grid(cvec, lmax=32):
     # Convert a vector of SH coefficients to an SH grid
     cilm = sht.shio.SHVectorToCilm(cvec)
-    carr = sht.expand.MakeGridDH(cilm, sampling=2, extend=1, norm=1, lmax=32) # 4 orthonorm, 1 4pi
+    carr = sht.expand.MakeGridDH(cilm, sampling=2, extend=1, norm=1, lmax=lmax) # 4 orthonorm, 1 4pi
     cgrid = sht.shclasses.SHGrid.from_array(carr)
     return cgrid
 
