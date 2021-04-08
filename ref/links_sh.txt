@@ -1,2 +1,0 @@
-http://openmopac.net/Manual/real_spherical_harmonics.html
-https://en.wikipedia.org/wiki/Table_of_spherical_harmonics
