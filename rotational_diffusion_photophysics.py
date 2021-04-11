@@ -85,9 +85,52 @@ class System:
         return s
             
     def solve(self, time):
+        # Solve the time evolution of the system including the pulse scheme.
+        
+        # Compute the diffusion kinetics matrix
         M = self.diffusion_kinetics_matrix()
+
+        # Get the initial conditions for the experiment from the fluorophore
+        # class.
         c0 = self.fluorophore.starting_coeffs(self._l, self._m)
-        c, _, _ = solve_evolution(M, c0, time)
+        
+        # Shift the time with time0, so it is represented in the laboratory
+        # time (starting with the time zero of pulse sequence).
+        time_lab = time + self.illumination.time0
+        time_mod = np.cumsum(self.illumination.time_windows)
+
+        # Insert a zero at the beginning of the modulation time sequence and 
+        # extend last time window to fit the whole requested times to sovle.
+        time_mod = np.insert(time_mod, 0, 0 )
+        time_mod[-1] = np.max(time_lab)
+
+        # Solve evolution in every time window
+        c = np.zeros((self.fluorophore.nspecies,
+                      self._l.size,
+                      time.size))
+        for i in np.arange(self.illumination.nwindows):
+            # Selection of time axis inside the current time window
+            time_sel = np.logical_and(time_lab >= time_mod[i],
+                                      time_lab <= time_mod[i+1])
+
+            # Select the time points inside the current time window
+            time_i = time_lab[time_sel]
+
+            # Add to the time points the end of the time window
+            # so we can comute the starting coefficients for the next window.
+            time_i = np.append(time_i, time_mod[i+1])
+
+            # Shift the local time axis so the zero concides with the beginning
+            # of the current time window
+            time_i = time_i - time_mod[i]
+
+            # Solve the time evolution
+            c_i, _, _ = solve_evolution(M[i], c0, time_i)
+
+            # Save results and update initial conditions for the next windows
+            c[:,:,time_sel] = c_i[:,:,:-1]
+            c0 = c_i[:,:,-1]
+        
         # Save variables, mainly for debugging.
         self._c0 = c0
         self._c = c
@@ -101,14 +144,26 @@ class System:
                                                     self._m,
                                                     self._wigner3j_prod_coeffs)
 
-        # The fluorophore class must provide the diffusion matrix and the
-        # kinetics matrix. The kinetics matrix rely in the photon flux prod
-        # matrix self._F.
-        #TODO: Enable pulsed experiments computing M for every time window.
+        # Compute the rotational diffusion matrix, it will not change with the
+        # time windows of laser modulation.
+        # The diffusion model is provided by the fluorophore class.
+        # In the future, if more complex diffusion models will be implemented,
+        # it might be convinient to create a separate diffusion class.
         D = self.fluorophore.diffusion_matrix(self._l, self._m)
-        K = self.fluorophore.kinetics_matrix(self._l, self._m, F)
-        M = diffusion_kinetics_matrix(D, K)
-        
+
+        # Prepare the rotational diffusion matrix for each time window
+        nwindows = self.illumination.nwindows
+        nspecies = self.fluorophore.nspecies
+        M = np.zeros( (nwindows,
+                       nspecies, nspecies,
+                       self._l.size, self._l.size) )
+        K = M
+        for i in np.arange(nwindows):
+            K[i] = self.fluorophore.kinetics_matrix(self._l, self._m,
+                        F * self.illumination.modulation[:,i][:,None,None],
+                        self.illumination.wavelength)
+            M[i] = diffusion_kinetics_matrix(D, K[i])
+
         # Save variables, mainly for debugging.
         self._c_exc = c_exc
         self._F = F
@@ -125,24 +180,30 @@ def anisotropy(signals):
 #####################
 class NegativeSwitcher:
     def __init__(self,
-                 cross_section_on_blue=0,
-                 cross_section_off_purple=0,
+                 cross_section_on=[0, 0],
+                 cross_section_off=[0, 0],
+                 wavelength=[488, 405],
                  lifetime_on=3e-9,
                  lifetime_off=16e-12,
                  quantum_yield_on_to_off=0.001,
                  quantum_yield_off_to_on=0.2,
                  quantum_yield_on_fluo=1,
                  diffusion_coefficient=1/(6*20e-9),
+                 starting_populations=[1,0,0,0],
                  fluorophore_type='rsFP_negative_offbranch_3states'):
-        # Cross section in cm2 of the absorption ot the on state with blue light
-        self.cross_section_on_blue = cross_section_on_blue  # [cm2]
+        # Cross section in cm2 of absorptions
+        self.cross_section_on = np.array(cross_section_on)  # [cm2]
+        self.cross_section_off = np.array(cross_section_off)  # [cm2]
+        self.wavelength = np.array(wavelength)  # [nm]
 
         # Lifetime of the on excited state in seconds
         self.lifetime_on = lifetime_on  # [s]
+        self.lifetime_off = lifetime_off  # [s]
 
         # Quantum yield of an off-switching event from the on excited state and
         # fluorescence from the on state
         self.quantum_yield_on_to_off = quantum_yield_on_to_off
+        self.quantum_yield_off_to_on = quantum_yield_off_to_on
         self.quantum_yield_on_fluo = quantum_yield_on_fluo
 
         # Rotational diffusion coefficient in Hertz
@@ -151,22 +212,21 @@ class NegativeSwitcher:
         # Label describing the fluorophore type
         self.fluorophore_type = fluorophore_type
         
-        if self.fluorophore_type == 'rsFP_negative_offbranch_3states':
-            # Number of states in the kinetic model
-            self.nspecies = 3
+        # Number of states in the kinetic model
+        self.nspecies = 4
 
-            # Index of the fluorescent state
-            # Here, only one fluorescent state is assumed.
-            # This is not necessary in general.
-            self.quantum_yield_fluo = [0, self.quantum_yield_on_fluo, 0]
-            self.quantum_yield_fluo = np.array(self.quantum_yield_fluo)
+        # Index of the fluorescent state
+        # Here, only one fluorescent state is assumed.
+        # This is not necessary in general.
+        self.quantum_yield_fluo = [0, self.quantum_yield_on_fluo, 0, 0]
+        self.quantum_yield_fluo = np.array(self.quantum_yield_fluo)
 
-            # Population at the beginning of the experiment
-            # Here we put all the population in the on state.
-            self.starting_populations = [1, 0, 0]
+        # Population at the beginning of the experiment
+        # Here we put all the population in the on state.
+        self.starting_populations = starting_populations
         return None
 
-    def kinetics_matrix(self, l, m, F):
+    def kinetics_matrix(self, l, m, F, wavelength_laser):
         # Compute the kinetics matrix expanded in l, m coefficients
         # Note that the order of the laser in F must be consistent with the
         # choices made in the fluorophore class.
@@ -182,9 +242,17 @@ class NegativeSwitcher:
 
         # Put the kinetic constants connecting the right species
         # K[1,0] is the kinetic constant for the proces 1 <- 0.
-        K[1,0] = F[0] * self.cross_section_on_blue
+        nlasers = F.shape[0]
+        nwavelengths = self.wavelength.size
+        for i in np.arange(nlasers):
+            for j in np.arange(nwavelengths):
+                if wavelength_laser[i] == self.wavelength[j]:
+                    K[1,0] = K[1,0] + F[i] * self.cross_section_on[j]
+                    K[3,2] = K[3,2] + F[i] * self.cross_section_off[j]
         K[0,1] = Feye / self.lifetime_on
-        K[2,1] = Feye / self.lifetime_on / self.quantum_yield_on_to_off
+        K[2,1] = Feye / self.lifetime_on  * self.quantum_yield_on_to_off
+        K[2,3] = Feye / self.lifetime_off
+        K[0,3] = Feye / self.lifetime_off * self.quantum_yield_off_to_on
         return K
     
     def diffusion_matrix(self, l, m):
@@ -227,6 +295,12 @@ class SingleLaser:
 
         # Refractive index of the immersion medium of the objective
         self.refractive_index = refractive_index
+
+        # Time windows settings for compatibility
+        self.modulation = np.array([[1]], dtype='float')
+        self.time_windows = np.array([0], dtype='float')
+        self.nwindows = 1
+        self.time0 = 0
         return None
     
     def photon_flux_prod_coeffs(self, l, m, wigner_3j_prod_coeffs):
@@ -253,7 +327,7 @@ class ModulatedLasers:
                  wavelength=[405, 488],
                  modulation=[[1, 0], [1, 1]],
                  time_windows=[250e-9, 1e-3],
-                 time0=[250e-9],
+                 time0=0,
                  numerical_aperture=1.4,
                  refractive_index=1.518):
         # Compute the photon flux from power density and wavelength
@@ -266,11 +340,17 @@ class ModulatedLasers:
         # It can be 'x', 'y', or 'c' for circular. 
         self.polarization = polarization
 
-        # Numerical aperture of excitation light beam
-        self.numerical_aperture = numerical_aperture
+        # Time Modulation properties
+        self.modulation = np.array(modulation, dtype='float')
+        self.time_windows = np.array(time_windows, dtype='float')
+        self.nwindows = self.time_windows.shape[0]
+        self.time0 = time0
 
+        # Numerical aperture of excitation light beam
         # Refractive index of the immersion medium of the objective
+        self.numerical_aperture = numerical_aperture
         self.refractive_index = refractive_index
+
         return None
     
     def photon_flux_prod_coeffs(self, l, m, wigner_3j_prod_coeffs):
@@ -428,7 +508,7 @@ class PolarizedDetection:
 
 
 ################################################################################
-# Engine of the rotational diffusion and kinetics solver
+# Engine of the rotational-diffusion and kinetics solver
 ################################################################################
 
 def quantum_numbers(lmax):
