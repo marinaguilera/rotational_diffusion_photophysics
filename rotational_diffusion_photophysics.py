@@ -16,6 +16,7 @@ An arbitrary kinetic scheme can be implemented using fluorophore classes.
 class System:
     def __init__(self,
                  fluorophore,
+                 diffusion,
                  illumination,
                  detection=[],
                  lmax=8,
@@ -40,8 +41,9 @@ class System:
         self._wigner3j_prod_coeffs = wigner_3j_prod_3darray(self._l, self._m)
 
         # Import the classes containing the parametrization and characteristics
-        # of fluorophore, illumination, and detection.
+        # of fluorophore, diffusion model, illumination, and detection.
         self.fluorophore = fluorophore
+        self.diffusion = diffusion
         self.illumination = illumination
         self.detection = detection
 
@@ -88,12 +90,14 @@ class System:
         # Solve the time evolution of the system including the pulse scheme.
         
         # Compute the diffusion kinetics matrix
+        # Matrix M contains all the information about the time evolution of the 
+        # system in every time window.
         M = self.diffusion_kinetics_matrix()
 
         # Get the initial conditions for the experiment from the fluorophore
         # class.
         c0 = self.fluorophore.starting_coeffs(self._l, self._m)
-        
+
         # Shift the time with time0, so it is represented in the laboratory
         # time (starting with the time zero of pulse sequence).
         time_lab = time + self.illumination.time0
@@ -127,7 +131,7 @@ class System:
             # Solve the time evolution
             c_i, _, _ = solve_evolution(M[i], c0, time_i)
 
-            # Save results and update initial conditions for the next windows
+            # Save results and update initial conditions for the next window
             c[:,:,time_sel] = c_i[:,:,:-1]
             c0 = c_i[:,:,-1]
         
@@ -149,7 +153,8 @@ class System:
         # The diffusion model is provided by the fluorophore class.
         # In the future, if more complex diffusion models will be implemented,
         # it might be convinient to create a separate diffusion class.
-        D = self.fluorophore.diffusion_matrix(self._l, self._m)
+        D = self.diffusion.diffusion_matrix(self._l, self._m,
+                self.fluorophore.nspecies)
 
         # Prepare the rotational diffusion matrix for each time window
         nwindows = self.illumination.nwindows
@@ -175,6 +180,24 @@ class System:
 def anisotropy(signals):
     return (signals[0] - signals[1]) / (signals[0] + 2*signals[1])
 
+##########################
+# Diffusion Models Classes
+##########################
+class IsotropicDiffusion:
+    def __init__(self,
+                 diffusion_coefficient):
+        # Rotational diffusion coefficient in Hertz
+        self.diffusion_coefficient = diffusion_coefficient  # [Hz]
+
+    def diffusion_matrix(self, l, m, nspecies):
+        # Compute the diffusion matrix
+        # Here an isotropic diffusion model is employed, every state has also
+        # the same rotational diffusion properties.
+        D = isotropic_diffusion_matrix(l, m,
+                self.diffusion_coefficient,
+                nspecies)
+        return D
+
 #####################
 # Fluorophore classes
 #####################
@@ -190,7 +213,7 @@ class NegativeSwitcher:
                  quantum_yield_on_fluo=1,
                  diffusion_coefficient=1/(6*20e-9),
                  starting_populations=[1,0,0,0],
-                 fluorophore_type='rsFP_negative_offbranch_3states'):
+                 fluorophore_type='rsFP_negative_4states'):
         # Cross section in cm2 of absorptions
         self.cross_section_on = np.array(cross_section_on)  # [cm2]
         self.cross_section_off = np.array(cross_section_off)  # [cm2]
@@ -206,13 +229,9 @@ class NegativeSwitcher:
         self.quantum_yield_off_to_on = quantum_yield_off_to_on
         self.quantum_yield_on_fluo = quantum_yield_on_fluo
 
-        # Rotational diffusion coefficient in Hertz
-        self.diffusion_coefficient = diffusion_coefficient  # [Hz]
-
         # Label describing the fluorophore type
-        self.fluorophore_type = fluorophore_type
-        
         # Number of states in the kinetic model
+        self.fluorophore_type = fluorophore_type
         self.nspecies = 4
 
         # Index of the fluorescent state
@@ -232,7 +251,7 @@ class NegativeSwitcher:
         # choices made in the fluorophore class.
         # In this case F[0] is the blue light.
 
-        # l, m, and F must be provided by outside.
+        # l, m, F, and wavelength must be provided by outside.
         # l and m are the quantum numbers of SH, while F encodes the info about
         # photon flux and it's angular dependence.
 
@@ -254,15 +273,6 @@ class NegativeSwitcher:
         K[2,3] = Feye / self.lifetime_off
         K[0,3] = Feye / self.lifetime_off * self.quantum_yield_off_to_on
         return K
-    
-    def diffusion_matrix(self, l, m):
-        # Compute the diffusion matrix
-        # Here an isotropic diffusion model is employed, every state has also
-        # the same rotational diffusion properties.
-        D = isotropic_diffusion_matrix(l, m,
-                self.diffusion_coefficient,
-                self.nspecies)
-        return D
 
     def starting_coeffs(self, l, m):
         # Compute the starting values for the population SH coefficients
@@ -470,7 +480,8 @@ def linear_light_matter_coeffs(l, m, polarization='x',
         c = c/np.sqrt(4*np.pi)
 
     # Normalize the coefficients so the total integral of the function is 1
-    # c = c/c[0]  # For now it is not on, because we loose the probability connection
+    # c = c/c[0]  # For now it is not on, because we loose the probability
+    # connection
     return c
 
 ###################
@@ -670,7 +681,8 @@ def diffusion_kinetics_matrix(D, K):
     return M
 
 def kinetics_diffusion_matrix_lmax(Dvec, Kmatrix, lmax):
-    # Create the full kinetic diffusion matrix expanded in sh staring from scratch.
+    # Create the full kinetic diffusion matrix expanded in sh staring 
+    # from scratch.
     # In this routine the expansion in l,m are included.
     assert len(Dvec) == len(Kmatrix)
 
