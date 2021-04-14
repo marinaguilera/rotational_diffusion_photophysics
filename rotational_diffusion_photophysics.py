@@ -7,6 +7,10 @@ import spherical as sf  # currently not used, might be removed in the future
 This module solves analytically the rotational diffusion and kinetics
 in flurescence experiments with complex photophysics.
 An arbitrary kinetic scheme can be implemented using fluorophore classes.
+The illumination of the experiment is implemented as a pulse scheme with
+square wave modulations.
+Detection and illumination can be done in arbitrary NA objectives, using 
+the Axelrod correction.
 '''
 
 ################################################################################
@@ -19,7 +23,7 @@ class System:
                  diffusion,
                  illumination,
                  detection=[],
-                 lmax=8,
+                 lmax=6,
                  norm='4pi',
                  ):
         # The simulation requires the expansion of all angular functions in 
@@ -48,13 +52,24 @@ class System:
         self.detection = detection
 
         '''
-        Small description of hidden variables
-        _F is the photon flux prod matrix, when multiplied by the cross section
-            gives the absorption rate prod matrix as a function of the angle.
-        _c_exc are SH coefficients for the orientational functions behind F. 
+        Small description of hidden variables. 
+        These are used mainly for debugging.
+        self._F is the photon flux prod matrix, when multiplied by the cross
+            section gives the absorption rate prod matrix as a function of the 
+            angle.
+        self._c_exc are SH coefficients for the orientational functions behind F. 
             It can be interpred as the number of photons that would be absorbed 
             by a molecule with cross section 1cm2 as a function of the 
             orientation of the dipole.
+        self._D Diffusion matrix rate model for each species.
+        self._K Kinetic matrix rate model for each time window and each pair 
+            of species.
+        self._M = M Full diffusion-kinetics matrix for each time window and each 
+            pair of species.
+        self._c0 SH coeffs of starting orientational populations
+        self._c SH coeffs of populations computed at the derired times
+        self._c_det SH coeffs of the detectors collection functions
+        self._s fluorescent signal for each detector
         '''
         return None
 
@@ -162,7 +177,9 @@ class System:
         M = np.zeros( (nwindows,
                        nspecies, nspecies,
                        self._l.size, self._l.size) )
-        K = M
+        K = np.zeros( (nwindows,
+                       nspecies, nspecies,
+                       self._l.size, self._l.size) )
         for i in np.arange(nwindows):
             K[i] = self.fluorophore.kinetics_matrix(self._l, self._m,
                         F * self.illumination.modulation[:,i][:,None,None],
@@ -185,7 +202,8 @@ def anisotropy(signals):
 ##########################
 class IsotropicDiffusion:
     def __init__(self,
-                 diffusion_coefficient):
+                 diffusion_coefficient=14e-9,  # GFP rotational diffusion
+                 ):
         # Rotational diffusion coefficient in Hertz
         self.diffusion_coefficient = diffusion_coefficient  # [Hz]
 
@@ -218,7 +236,7 @@ class NegativeSwitcher:
                  quantum_yield_cis_to_trans_neutral=0, # for 8 states model
                  nspecies=4):
         # Cross section in cm2 of absorptions
-        epsilon2sigma = 3.825e-19  # [Tkachenko2007, page 5]
+        epsilon2sigma = 3.825e-21  # [Tkachenko2007, page 5]
         self.extinction_coeff_on = np.array(extinction_coeff_on)  # [M-1 cm-1]
         self.extinction_coeff_off = np.array(extinction_coeff_off)  # [M-1 cm-1]
         self.cross_section_on = self.extinction_coeff_on * epsilon2sigma  # [cm2]
@@ -919,10 +937,10 @@ def plot_proj(grid, clims=[0, 1], cmap=plt.cm.Blues):
 if __name__ == "__main__":
     from codetiming import Timer
 
-    rsEGFP2 = NegativeSwitcher(cross_section_on_blue=1e-10,
-                               lifetime_on=3.6e-9,
-                               quantum_yield_on_to_off=0.001,
-                               diffusion_coefficient=1/(6*100e-6) )
+    # rsEGFP2 = NegativeSwitcher(cross_section_on_blue=1e-10,
+    #                            lifetime_on=3.6e-9,
+    #                            quantum_yield_on_to_off=0.001,
+    #                            diffusion_coefficient=1/(6*100e-6) )
 
     # tau = 100e-6 # us anisotropy decay
     # D = 1/(tau*6) # Hz
