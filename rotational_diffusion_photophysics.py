@@ -667,7 +667,7 @@ def wigner_3j_prod_3darray(l, m):
 
             # Compute SH product coefficients
             w3jp[i,j,:] = np.sqrt( (2*l1 + 1) * (2*l2 + 1) * (2*l + 1) / 
-                                    (np.pi*4) ) * w3j0 * w3j1 *(-1)**(2-np.mod(m3,2)) 
+                                    (np.pi*4) ) * w3j0 * w3j1 *(-1)**np.float(m3) 
             #NOTE: (-1)** factor is necessary to match the result obtained
             # with clebsh-gordan coefficients. I am not sure why it is the case.
     
@@ -922,7 +922,6 @@ def plot_proj(grid, clims=[0, 1], cmap=plt.cm.Blues):
     if clims == []:
         clims = [np.min(prob), np.max(prob)]
 
-    fig, ax1 = plt.subplots()
     im1 = plt.imshow(prob, extent=(0, 2, -0.5, 0.5),
                     vmin=clims[0], vmax=clims[1],
                     cmap=cmap, alpha=1)
@@ -930,7 +929,7 @@ def plot_proj(grid, clims=[0, 1], cmap=plt.cm.Blues):
     plt.ylabel('$\\theta$ $(\pi)$')
     plt.xticks([0, 0.5, 1, 1.5, 2])
     plt.yticks([0.5, 0.25, 0, -0.25, -0.5])
-    plt.colorbar(ax=ax1)
+    plt.colorbar(ax=plt.gca())
     return
 
 
