@@ -1,0 +1,18 @@
+pw2:
+488 Hpol 2830 W/cm2
+405 Cpol 12500 W/cm2
+
+pw1:
+488 Hpol 708 W/cm2
+405 Cpol 12500 W/cm2
+
+indexes of raw data:
+031 30nm
+030 70nm
+028 50nm
+024 100nm
+019 500nm
+021 rs2 2B fraction
+
+folder:
+C:\Users\andre\Documents\data\lab_fastRESOLFT\2020_10_22_HIV_third_rs2
