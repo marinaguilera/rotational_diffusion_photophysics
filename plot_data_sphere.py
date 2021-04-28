@@ -191,7 +191,6 @@ def plot_data_sphere(ax, data,
                     cax=cbax, orientation='horizontal')
     return surf
 
-
 if __name__ == '__main__':
 
     fig = plt.figure(figsize=(5,5))

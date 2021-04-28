@@ -1,7 +1,7 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import pyshtools as sht
 import spherical as sf  # currently not used, might be removed in the future
+import matplotlib.pyplot as plt  # used only for plotting tools
 
 '''
 This module solves analytically the rotational diffusion and kinetics
