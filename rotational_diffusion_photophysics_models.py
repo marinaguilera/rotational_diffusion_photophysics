@@ -1,8 +1,10 @@
 import numpy as np
 import rotational_diffusion_photophysics as rdp
 
-numerical_aperture = 1.1 # 1.4
+numerical_aperture = 1.4 # 1.4
 refractive_index = 1.518 # 1.518
+numerical_aperture = 0.1 # 1.4
+refractive_index = 1 # 1.518
 lmax = 6
 
 # Create the illumination scheme
@@ -54,7 +56,7 @@ rsEGFP2_8states = rdp.NegativeSwitcher(extinction_coeff_on=  [  5260, 51560],
                                         protonation_time_on=50e-6,
                                         nspecies=8,
                                         quantum_yield_trans_to_cis_anionic=0.,
-                                        quantum_yield_cis_to_trans_neutral=0.07,
+                                        quantum_yield_cis_to_trans_neutral=0.10,
                                         )
 
 # Diffusion model
@@ -99,12 +101,12 @@ from a pulse scheme with a given time delay between two 405 pulses.
 def starss3_illumination(delay=5e-6, 
                          numerical_aperture=numerical_aperture,
                          refractive_index=refractive_index):
-    illumination = rdp.ModulatedLasers(power_density=[.4e6, 5000],
+    illumination = rdp.ModulatedLasers(power_density=[1e6, 5000],
                                        wavelength=[405, 488],
                                        polarization=['x', 'xy'],
                                        modulation=[[0,1,0,1,0,0],[1,0,0,0,0,1]],
-                                       time_windows=[10e-3, 50e-9, delay, 50e-9, 500e-6-delay, 3e-3],
-                                       time0=10e-3+50e-9+delay+50e-9+500e-6-delay,
+                                       time_windows=[10e-3, 50e-9, delay, 50e-9, 1000e-6-delay, 3e-3],
+                                       time0=10e-3+50e-9+delay+50e-9+1000e-6-delay,
                                        numerical_aperture=numerical_aperture,
                                        refractive_index=refractive_index,
                                        )
@@ -122,7 +124,7 @@ detC = rdp.PolarizedDetection(polarization=['xy'],
                               )
 
 starss3 = rdp.System(illumination=[],
-                     fluorophore=rsEGFP2_8states,
+                     fluorophore=rsEGFP2_4states,
                      diffusion=isotropic_diffusion(100e-6),
                      detection=detC,
                      )
@@ -158,17 +160,22 @@ def starss3_detector_signals(delays,
 
 
 if __name__ == "__main__":
+    label = 'starss3_NA0p1_rsEGFP24states_550KWcm2_100us_'
+    
     import matplotlib.pyplot as plt
     delay = [0.5e-6, 1e-6,10e-6,100e-6,200e-6,499e-6]
-    delay = [499e-6]
+    # delay = [499e-6]
     s, exp = starss3_detector_signals(delay)
     print(s)
-    plt.figure()
+    plt.figure(dpi=300)
     plt.plot(delay, s)
     plt.ylim((1.5,1.75))
     plt.xscale('log')
-    plt.xlabel('Time (s)')
+    plt.xlabel('Delay (s)')
     plt.ylabel('Normalized Counts')
+
+    # plt.savefig(label+'normalized_counts')
+    # np.savez_compressed(label+'data',s)
 
     # plt.figure()
     # plt.plot(exp._c[0].T)
@@ -189,5 +196,6 @@ if __name__ == "__main__":
     # grid = rdp.vec2grid(c0_10)
     # ax = plt.subplot(projection='3d')
     # plot_data_sphere(ax, grid.data)
+
 
 
