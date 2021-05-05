@@ -113,6 +113,14 @@ class System:
         # class.
         c0 = self.fluorophore.starting_coeffs(self._l, self._m)
 
+        # Optimization, remove all odd l value coefficients from c0 and M.
+        # We will need to add them back, after the solution.
+        # This semplification is usefull when only light matter interaction can
+        # affect the orientational probablities.None
+        # print(M.shape)
+        # M, c0 = remove_odd_coeffs(M, c0, self._l)
+        # print(M.shape)
+
         # Shift the time with time0, so it is represented in the laboratory
         # time (starting with the time zero of pulse sequence).
         time_lab = time + self.illumination.time0
@@ -150,6 +158,9 @@ class System:
             c[:,:,time_sel] = c_i[:,:,:-1]
             c0 = c_i[:,:,-1]
         
+        # Add back zeros in place of odd l coeffs
+        # M, c0, c = add_odd_coeffs_zeros(M, c0, c, self._l)
+
         # Save variables, mainly for debugging.
         self._c0 = c0
         self._c = c
@@ -838,6 +849,21 @@ def solve_evolution(M, c0, time):
     c = np.reshape(c, (nspecies, ncoeffs, time.size))
     return c, L, U
 
+def remove_odd_coeffs(M, c0, l):
+    l_sel = l%2 == 0
+    c0 = c0[:, l_sel]
+    M = M[:, :, :, l_sel, l_sel]
+    return M, c0
+
+def add_odd_coeffs_zeros(M, c0, c, l):
+    c0_out = np.zeros((c0.shape[0], l.size))
+    c_out = np.zeros((c0.shape[0], l.size, c0.shape[2]))
+    M_out = np.zeros((M.shape[0], M.shape[1], M.shape[2], l.size, l.size))
+    l_sel = l%2 == 0
+    c0_out[:,l_sel] = c0
+    c_out[:,l_sel,:] = c
+    M_out[:,:,:,l_sel,l_sel] = M
+    return M_out, c0_out, c_out
 
 ################################################################################
 # Auxiliary functions
