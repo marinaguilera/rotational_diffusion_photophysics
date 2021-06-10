@@ -5,7 +5,7 @@ import rotational_diffusion_photophysics as rdp
 import colour
 from rotational_diffusion_photophysics_models import *
 
-def plot_pulse_scheme(exp, xlim=[-.1e-3, 1e-3], ylim=[0, 6e4], yscale='normal'):
+def plot_pulse_scheme(exp, xlim=[-.1e-3, 1e-3], ylim=[0, 6e4], yscale='linear'):
 
     # Values for testing
     # xlim = [-.1e-3, 1e-3]
@@ -41,7 +41,6 @@ def plot_pulse_scheme(exp, xlim=[-.1e-3, 1e-3], ylim=[0, 6e4], yscale='normal'):
         rgb[rgb>1] = 1
         return rgb
 
-    plt.figure()
     labels = []
     for i in np.arange(wl.size):
         color = wl2rgb(wl[i])

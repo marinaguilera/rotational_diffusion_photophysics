@@ -364,6 +364,10 @@ class NegativeSwitcher:
         c0[:,0] = self.starting_populations
         return c0
 
+class STEDDye:
+    def __init__(self):
+        pass
+
 ######################
 # Illumination classes
 ######################
