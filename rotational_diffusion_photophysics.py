@@ -964,7 +964,7 @@ def plot_proj(grid, clims=[0, 1], cmap=plt.cm.Blues):
 
 
 if __name__ == "__main__":
-    from codetiming import Timer
+    # from codetiming import Timer
 
     # rsEGFP2 = NegativeSwitcher(cross_section_on_blue=1e-10,
     #                            lifetime_on=3.6e-9,
