@@ -2,7 +2,7 @@
 import pyshtools as sht
 import spherical as sf
 import numpy as np
-import starss_kinetics_difusion_solution as kd
+# import rotational_diffusion_photophysics as kd
 
 # %%
 
