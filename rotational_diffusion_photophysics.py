@@ -1,6 +1,6 @@
 import numpy as np
-import pyshtools as sht
-import spherical as sf  # currently not used, might be removed in the future
+import pyshtools as sht  # used in many spherical calculations
+import spherical as sf  # currently used only for CG coefficients
 import matplotlib.pyplot as plt  # used only for plotting tools
 
 '''
@@ -208,6 +208,28 @@ class System:
 def anisotropy(signals):
     return (signals[0] - signals[1]) / (signals[0] + 2*signals[1])
 
+def anisotropy_variance(signals, signals_minus_background):
+    il_wobg = signals_minus_background[0]; # Intensity parallel w/o background
+    ip_wobg = signals_minus_background[1]; # Intensity perpendicular w/o background
+    E_il = signals[0]; # Intensity parallel
+    E_ip = signals[1]; # Intensity perpendicular
+    
+    # Expectations, variances and covariances
+    Cov_il_ip = - E_il * E_ip / (E_il + E_ip)
+    E_N = np.abs(il_wobg - ip_wobg)
+    E_D = np.abs(il_wobg + 2*ip_wobg)
+    Var_N = E_il + E_ip - 2*Cov_il_ip
+    Var_D = E_il + 4*E_ip + 4*Cov_il_ip
+    Cov_N_D = E_il - 2*E_ip + Cov_il_ip
+    
+    # Anisotropy Variance (see DP 20200224) and reference
+    Var_r = (
+        Var_N/np.power(E_D,2) 
+        - 2*E_N*Cov_N_D/np.power(E_D,3) 
+        + Var_D/np.power(E_D,4)
+        )
+    return Var_r
+
 ##########################
 # Diffusion Models Classes
 ##########################
@@ -245,6 +267,8 @@ class NegativeSwitcher:
                  protonation_time_on = 150e-6,  # for 6 states model
                  quantum_yield_trans_to_cis_anionic=0,  # for 8 states model
                  quantum_yield_cis_to_trans_neutral=0, # for 8 states model
+                 quantum_yield_cis_anionic_bleaching=0,
+                 quantum_yield_trans_anionic_bleaching=0,
                  nspecies=4):
         # Cross section in cm2 of absorptions
         epsilon2sigma = 3.825e-21  # [Tkachenko2007, page 5]
@@ -275,6 +299,11 @@ class NegativeSwitcher:
         self.quantum_yield_trans_to_cis_anionic = quantum_yield_trans_to_cis_anionic
         self.protonation_time_on = protonation_time_on
         self.deprotonation_time_off = deprotonation_time_off
+
+        # Bleaching quantum yields, assuming only a bleaching channel from 
+        # excitaiton of the on state.
+        self.quantum_yield_cis_anionic_bleaching = quantum_yield_cis_anionic_bleaching
+        self.quantum_yield_trans_anionic_bleaching = quantum_yield_trans_anionic_bleaching
 
         # Label describing the fluorophore type
         # Number of states in the kinetic model
@@ -356,6 +385,33 @@ class NegativeSwitcher:
             K[6,7] = Feye / self.lifetime_off
             K[4,7] = Feye / self.lifetime_off * self.quantum_yield_cis_to_trans_neutral
             K[0,6] = Feye / self.deprotonation_time_off
+        
+        if self.nspecies == 9:
+            self.fluorophore_type = 'rsFP_negative_9states_bleaching'
+            for i in np.arange(nlasers):
+                for j in np.arange(nwavelengths):
+                    if wavelength_laser[i] == self.wavelength[j]:
+                        K[1,0] = K[1,0] + F[i] * self.cross_section_on[j]  # cis anionic
+                        K[3,2] = K[3,2] + F[i] * self.cross_section_on[j]  # trans anionic
+                        K[5,4] = K[5,4] + F[i] * self.cross_section_off[j]  # trans neutral
+                        K[7,6] = K[7,6] + F[i] * self.cross_section_off[j]  # cis neutral
+            # On-branch
+            K[0,1] = Feye / self.lifetime_on
+            K[2,1] = Feye / self.lifetime_on  * self.quantum_yield_on_to_off
+            K[2,3] = Feye / self.lifetime_on
+            K[0,3] = Feye / self.lifetime_on  * self.quantum_yield_trans_to_cis_anionic
+            K[4,2] = Feye / self.protonation_time_on
+
+            # Off-branch
+            K[4,5] = Feye / self.lifetime_off
+            K[6,5] = Feye / self.lifetime_off * self.quantum_yield_off_to_on
+            K[6,7] = Feye / self.lifetime_off
+            K[4,7] = Feye / self.lifetime_off * self.quantum_yield_cis_to_trans_neutral
+            K[0,6] = Feye / self.deprotonation_time_off
+
+            # Bleaching channels from teh on-branch
+            K[8,1] = Feye / self.lifetime_on * self.quantum_yield_cis_anionic_bleaching
+            K[8,3] = Feye / self.lifetime_on * self.quantum_yield_trans_anionic_bleaching
         return K
 
     def starting_coeffs(self, l, m):
@@ -964,7 +1020,7 @@ def plot_proj(grid, clims=[0, 1], cmap=plt.cm.Blues):
 
 
 if __name__ == "__main__":
-    # from codetiming import Timer
+    from codetiming import Timer
 
     # rsEGFP2 = NegativeSwitcher(cross_section_on_blue=1e-10,
     #                            lifetime_on=3.6e-9,

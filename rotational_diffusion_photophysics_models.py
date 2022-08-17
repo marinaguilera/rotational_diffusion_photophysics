@@ -9,10 +9,12 @@ in this script.
 ################################################################################
 ## Common
 
-numerical_aperture = 1.4 # 1.4
-refractive_index = 1.518 # 1.518
+# numerical_aperture = 1.4 # 1.4
+# refractive_index = 1.518 # 1.518
 # numerical_aperture = 0.1 # 1.4
 # refractive_index = 1 # 1.518
+numerical_aperture = 1.1 # reduced NA
+refractive_index = 1.518 # water at 405nm
 lmax = 6
 
 ### Create the detectors
@@ -43,6 +45,22 @@ rsEGFP2_8states = rdp.NegativeSwitcher(extinction_coeff_on=  [  5260, 51560],
                                         deprotonation_time_off=5.1e-6,
                                         protonation_time_on=48e-6,
                                         nspecies=8,
+                                        quantum_yield_trans_to_cis_anionic=0.0165,
+                                        quantum_yield_cis_to_trans_neutral=0.33,
+                                        )
+
+rsEGFP2_9states = rdp.NegativeSwitcher(extinction_coeff_on=  [  5260, 51560],
+                                        extinction_coeff_off=[ 22000,    60],
+                                        wavelength=          [   405,   488],
+                                        lifetime_on=1.6e-9,
+                                        lifetime_off=20e-12,
+                                        quantum_yield_on_to_off=1.65e-2,
+                                        quantum_yield_off_to_on=0.33,
+                                        quantum_yield_on_fluo=0.35,
+                                        starting_populations=[1,0,0,0,0,0,0,0,0],
+                                        deprotonation_time_off=5.1e-6,
+                                        protonation_time_on=48e-6,
+                                        nspecies=9,
                                         quantum_yield_trans_to_cis_anionic=0.0165,
                                         quantum_yield_cis_to_trans_neutral=0.33,
                                         )
@@ -123,7 +141,7 @@ from a pulse scheme with a given time delay between two 405 pulses.
 def starss3_illumination(delay=5e-6, 
                          numerical_aperture=numerical_aperture,
                          refractive_index=refractive_index):
-    illumination = rdp.ModulatedLasers(power_density=[7.12e6/6, 14e3/6],
+    illumination = rdp.ModulatedLasers(power_density=[7.12e6/6/2, 14e3/6],
                                        wavelength=[405, 488],
                                        polarization=['x', 'xy'],
                                        modulation=[[0,0,1,0,1,0,0],[1,0,0,0,0,0,1]],
@@ -136,7 +154,7 @@ def starss3_illumination(delay=5e-6,
 
 def starss3_illumination_1pulse(delay=5e-6):
     illumination = starss3_illumination(delay)
-    illumination.modulation = np.array([[0,0,1,0,0,0,0],[1,0,0,0,0,0,1]], dtype='float')
+    illumination.modulation = np.array([[0,0,0,0,1,0,0],[1,0,0,0,0,0,1]], dtype='float')
     return illumination
 
 ### Circularly polarized detector
@@ -147,7 +165,7 @@ detC = rdp.PolarizedDetection(polarization=['xy'],
 
 ### Full experiment
 starss3 = rdp.System(illumination=starss3_illumination(50e-6),
-                     fluorophore=rsEGFP2_4states,
+                     fluorophore=rsEGFP2_8states,
                      diffusion=isotropic_diffusion(100e-6),
                      detection=detC,
                      )
