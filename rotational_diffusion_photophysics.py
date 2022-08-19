@@ -1020,7 +1020,8 @@ def plot_proj(grid, clims=[0, 1], cmap=plt.cm.Blues):
 
 
 if __name__ == "__main__":
-    from codetiming import Timer
+    a = None
+    # from codetiming import Timer
 
     # rsEGFP2 = NegativeSwitcher(cross_section_on_blue=1e-10,
     #                            lifetime_on=3.6e-9,
@@ -1120,3 +1121,4 @@ if __name__ == "__main__":
     # # plt.imshow(M)
     # # plt.show()
     # # plt.imshow(cplotgrid[20].data, vmin=0, vmax=1)
+    

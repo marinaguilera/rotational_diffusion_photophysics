@@ -9,12 +9,12 @@ in this script.
 ################################################################################
 ## Common
 
-# numerical_aperture = 1.4 # 1.4
-# refractive_index = 1.518 # 1.518
-# numerical_aperture = 0.1 # 1.4
-# refractive_index = 1 # 1.518
-numerical_aperture = 1.1 # reduced NA
-refractive_index = 1.518 # water at 405nm
+numerical_aperture = 1.4 # 1.4
+refractive_index = 1.518 # 1.518
+# numerical_aperture = 0.1 #
+# refractive_index = 1 #
+# numerical_aperture = 1.1 # reduced NA
+# refractive_index = 1.518 # water at 405nm
 lmax = 6
 
 ### Create the detectors
@@ -201,28 +201,26 @@ def starss3_detector_signals(delays,
 
 
 if __name__ == "__main__":
-    label = 'starss3_NA0p1_rsEGFP24states_550KWcm2_100us_'
     
     import matplotlib.pyplot as plt
     delay = [0.5e-6, 1e-6,10e-6,100e-6,200e-6,499e-6]
-    # delay = [499e-6]
     s, exp = starss3_detector_signals(delay)
-    print(s)
+    # print(s)
     plt.figure(dpi=300)
     plt.plot(delay, s)
     plt.ylim((1.5,1.75))
     plt.xscale('log')
     plt.xlabel('Delay (s)')
     plt.ylabel('Normalized Counts')
+    plt.show()
 
+    # label = 'starss3_NA0p1_rsEGFP24states_550KWcm2_100us_'
     # plt.savefig(label+'normalized_counts')
     # np.savez_compressed(label+'data',s)
 
     # plt.figure()
     # plt.plot(exp._c[0].T)
     # plt.ylim((-1,1))
-
-    # print(exp._c[0,0,200])
 
     # plt.figure()
     # plt.imshow(np.log10(np.abs(exp._M[1,:,:,0,0])))
