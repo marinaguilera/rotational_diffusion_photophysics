@@ -4,8 +4,8 @@ An arbitrary kinetic scheme can be used and the program analytically solves the 
 using reversibly switchable proteins", Andrea Volpato, Dirk Ollech, Jonatan Alvelid, Martina Damenti, Barbara Müller, Andrew York, Maria Ingaramo, Ilaria Testa (manuscript just-accepted, Nature Biotechnology, 2022).
 
 ## Content
-- rotational_diffusion_photophysics.py  
+- `rotational_diffusion_photophysics.py`  
 Main engine of the kinetics and diffusion solver for an arbitrary kinetics scheme and isotorpic free rotatioal diffusion.
 
-- rotational_diffusion_photophysics_models.py  
+- `rotational_diffusion_photophysics_models.py`  
 Modeling of STARSS experiments using rsEGFP2 protein.
