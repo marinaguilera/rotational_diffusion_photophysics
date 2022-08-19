@@ -14,7 +14,7 @@ Modeling of STARSS experiments using rsEGFP2 protein.
 Some useful plotting tools for orientational probabilities and STARSS pulse schemes.
 
 - `starss` folder  
-Notebooks with computation and plotting of example STARSS simulations discussed in the notes.
+Notebooks with computation and plotting of example STARSS simulations.
 
 - `notes` folder  
 Mathematical notes about the rotational diffusion and kinetics model.
